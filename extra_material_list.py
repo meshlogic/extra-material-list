@@ -1,17 +1,22 @@
 # -------------------------------------------------------------------------------
-#                      Extra Material List - Addon for Blender
-# Version: 0.1
-# Revised: 30.05.2017
-# Author: Miki (Meshlogic)
+#                     Extra Material List - Addon for Blender
+#
+# - Display materials as preview or plain list
+# - Display object and world materials
+# - Option to eliminate duplicates for node groups and materials
+#
+# Version: 0.2
+# Revised: 11.08.2017
+# Author: Miki (meshlogic)
 # -------------------------------------------------------------------------------
 bl_info = {
     "name": "Extra Material List",
     "author": "MeshLogic",
     "category": "Node",
     "description": "An alternative object/world material list for Node Editor.",
-    "location": "Node Editor > Tools > Extra Material List",
-    "version": (0, 1),
-    "blender": (2, 78, 0)
+    "location": "Node Editor > Tools > Material List",
+    "version": (0, 2),
+    "blender": (2, 79, 0)
 }
 
 import bpy
@@ -26,7 +31,7 @@ from bpy.app.handlers import persistent
 class ExtraMaterialList_PT(Panel):
     bl_space_type = 'NODE_EDITOR'
     bl_region_type = 'TOOLS'
-    bl_category = "Extra Material List"
+    bl_category = "Material List"
     bl_label = "Extra Material List"
 
     # --- Available only for "shading nodes" render
@@ -57,7 +62,7 @@ class ExtraMaterialList_PT(Panel):
         row.prop(props, "style", expand=True)
 
         # -----------------------------------------------------------------------
-        # PREVIEW List Style
+        # PREVIEW Style
         # -----------------------------------------------------------------------
         if props.style == 'PREVIEW':
 
@@ -127,10 +132,12 @@ class ExtraMaterialList_PT(Panel):
                     rows=props.rows, cols=props.cols
                 )
 
+            layout.separator()
+
         # -----------------------------------------------------------------------
-        # PLAIN List Style
+        # LIST Style
         # -----------------------------------------------------------------------
-        elif props.style == 'PLAIN':
+        elif props.style == 'LIST':
 
             # --- Object materials
             if sdata.shader_type == 'OBJECT':
@@ -153,7 +160,15 @@ class ExtraMaterialList_PT(Panel):
             # --- Show icons prop
             row = layout.row()
             row.prop(props, "show_icons")
-            row = layout.row()
+
+        # -----------------------------------------------------------------------
+        # ELIMINATE Duplicates
+        # -----------------------------------------------------------------------
+        row = layout.row()
+        row.label("Eliminate Duplicates:", icon='RADIO')
+        row = layout.row(True)
+        row.operator("extra_material_list.eliminate_nodegroups", text="Node Groups")
+        row.operator("extra_material_list.eliminate_materials", text="Materials")
 
 
 # -------------------------------------------------------------------------------
@@ -223,6 +238,80 @@ def update_active_world(self, context):
 
 
 # -------------------------------------------------------------------------------
+# ELIMINATE MATERIAL DUPLICATES
+# -------------------------------------------------------------------------------
+class ExtraMaterialList_PT_EliminateMaterials(Operator):
+    bl_idname = "extra_material_list.eliminate_materials"
+    bl_label = "Eliminate Material Duplicates"
+    bl_description = "Eliminate material duplicates (ending with .001, .002, etc) and replace them with the original material if found."
+
+    def execute(self, context):
+        print("\nEliminate Material Duplicates:")
+        mats = bpy.data.materials
+
+        # --- Search for mat. slots in all objects
+        for obj in bpy.data.objects:
+            for slot in obj.material_slots:
+
+                # Get the material name as 3-tuple (base, separator, extension)
+                (base, sep, ext) = slot.name.rpartition('.')
+
+                # Replace the numbered duplicate with the original if found
+                if ext.isnumeric():
+                    if base in mats:
+                        print("  For object '%s' replace '%s' with '%s'" % (obj.name, slot.name, base))
+                        slot.material = mats.get(base)
+
+        return {'FINISHED'}
+
+
+# -------------------------------------------------------------------------------
+# ELIMINATE NODE GROUP DUPLICATES
+# -------------------------------------------------------------------------------
+class ExtraMaterialList_PT_EliminateNodeGroups(Operator):
+    bl_idname = "extra_material_list.eliminate_nodegroups"
+    bl_label = "Eliminate Node Group Duplicates"
+    bl_description = "Eliminate node group duplicates (ending with .001, .002, etc) and replace them with the original node group if found."
+
+    # --- Eliminate node group duplicate with the original group found
+    def eliminate(self, node):
+        node_groups = bpy.data.node_groups
+
+        # Get the node group name as 3-tuple (base, separator, extension)
+        (base, sep, ext) = node.node_tree.name.rpartition('.')
+
+        # Replace the numbered duplicate with original if found
+        if ext.isnumeric():
+            if base in node_groups:
+                print("  Replace '%s' with '%s'" % (node.node_tree.name, base))
+                node.node_tree.use_fake_user = False
+                node.node_tree = node_groups.get(base)
+
+    # --- Execute
+    def execute(self, context):
+        print("\nEliminate Node Group Duplicates:")
+
+        mats = list(bpy.data.materials)
+        worlds = list(bpy.data.worlds)
+        node_groups = bpy.data.node_groups
+
+        # --- Search for duplicates in the actual node groups
+        for group in node_groups:
+            for node in group.nodes:
+                if node.type == 'GROUP':
+                    self.eliminate(node)
+
+        # --- Search for duplicates in materials
+        for mat in mats + worlds:
+            if mat.use_nodes:
+                for node in mat.node_tree.nodes:
+                    if node.type == 'GROUP':
+                        self.eliminate(node)
+
+        return {'FINISHED'}
+
+
+# -------------------------------------------------------------------------------
 # NAVIGATION OPERATOR
 # -------------------------------------------------------------------------------
 class ExtraMaterialList_PT_Nav(Operator):
@@ -247,7 +336,7 @@ class ExtraMaterialList_PT_Nav(Operator):
             # List of all scene materials
             mat_list = list(bpy.data.materials)
 
-            # Get index of current active material
+            # Get index of the current active material
             mat = sdata.id_from.active_material
             if mat in mat_list:
                 id = mat_list.index(mat)
@@ -269,7 +358,7 @@ class ExtraMaterialList_PT_Nav(Operator):
             # List of all scene worlds
             world_list = list(bpy.data.worlds)
 
-            # Get index of current active world
+            # Get index of the current active world
             world = context.scene.world
             if world in world_list:
                 id = world_list.index(world)
@@ -328,7 +417,7 @@ class ExtraMaterialList_Props(bpy.types.PropertyGroup):
     style = EnumProperty(
         items=[
             ('PREVIEW', "Preview", "", 0),
-            ('PLAIN', "Plain", "", 1),
+            ('LIST', "List", "", 1),
         ],
         default='PREVIEW',
         name="Style",
